@@ -4,6 +4,7 @@ import socket
 import random
 import csv
 import os
+import asyncio
 from datetime import datetime
 
 app = FastAPI()
@@ -62,8 +63,59 @@ wavelength_state = {
     ],
     "current_word": "",
     "target_score": 0,
-    "guesses": {} 
+    "guesses": {},
+    
+    # NEW: State tracking for timeouts
+    "timer_task": None,
+    "last_target": 0,
+    "last_guesses": {}
 }
+
+async def process_wavelength_round_end():
+    """Forces the round to end, broadcasts results, and cycles the host."""
+    print("\n[SERVER] Round Complete (All Guesses In or Timeout Reached).")
+    
+    # Save a backup of the results just in case a slow player guesses late
+    wavelength_state["last_target"] = wavelength_state["target_score"]
+    wavelength_state["last_guesses"] = wavelength_state["guesses"].copy()
+    
+    # Broadcast Results to everyone currently connected
+    payload = json.dumps({
+        "type": "ROUND_RESULTS",
+        "target": wavelength_state["target_score"],
+        "guesses": wavelength_state["guesses"]
+    })
+    
+    for dev_id, ws in manager.active_connections.items():
+        if dev_id in wavelength_state["registered_players"]:
+            try:
+                await ws.send_text(payload)
+            except Exception:
+                pass
+                
+    # LOGGING: Final Round Results
+    log_game_event("wavelength", "System", "ROUND_END", level=wavelength_state["current_word"], status="COMPLETED", details=f"Target: {wavelength_state['target_score']}%, Guesses: {wavelength_state['guesses']}")
+    
+    # ROUND ROBIN ROTATION
+    total_players = len(wavelength_state["registered_players"])
+    if total_players > 0:
+        wavelength_state["host_index"] = (wavelength_state["host_index"] + 1) % total_players
+        
+    wavelength_state["status"] = "lobby"
+    wavelength_state["current_word"] = ""
+    wavelength_state["target_score"] = 0
+    wavelength_state["guesses"] = {}
+    wavelength_state["timer_task"] = None
+    
+    if total_players > 0:
+        print(f"[SERVER] Round reset. Next host is: {wavelength_state['registered_players'][wavelength_state['host_index']]}\n")
+
+async def wavelength_timeout_coroutine():
+    """Background timer that counts to 30 and triggers the end of the round."""
+    await asyncio.sleep(30)
+    if wavelength_state["status"] == "guessing":
+        print("\n[SERVER] 30 seconds elapsed! Forcing round to end.")
+        await process_wavelength_round_end()
 
 @app.websocket("/ws/{device_id}")
 async def websocket_endpoint(websocket: WebSocket, device_id: str):
@@ -99,7 +151,6 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                         wavelength_state["registered_players"].append(device_id)
                         print(f"[SERVER] {device_id} joined Wavelength. Total players: {len(wavelength_state['registered_players'])}")
                         
-                        # +++ LOGGING: Player Joined Lobby +++
                         log_game_event("wavelength", device_id, "JOIN_LOBBY", status="CONNECTED")
 
                     current_host_id = wavelength_state["registered_players"][wavelength_state["host_index"]]
@@ -107,7 +158,6 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                     if device_id == current_host_id:
                         wavelength_state["status"] = "host_choosing"
                         
-                        # +++ LOGGING: Assigned as Host +++
                         log_game_event("wavelength", device_id, "ROLE_ASSIGNED", status="HOST")
                         
                         await websocket.send_text(json.dumps({
@@ -144,36 +194,46 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                 wavelength_state["guesses"] = {} 
                 
                 print(f"\n[SERVER] HOST LOCKED IN! Word: '{selected_word}' | Target: {target_score}%")
+                print("[SERVER] 30-Second Guessing Timer Started!")
                 
-                # +++ LOGGING: Host locked in word and target +++
                 log_game_event("wavelength", device_id, "HOST_LOCKED_IN", level=selected_word, status="PENDING_GUESSES", details=f"Target: {target_score}%")
+                
+                # Cancel existing timer if one is somehow running, then start a new 30-second countdown
+                if wavelength_state["timer_task"]:
+                    wavelength_state["timer_task"].cancel()
+                wavelength_state["timer_task"] = asyncio.create_task(wavelength_timeout_coroutine())
 
             # ---------------------------------------------------------
             # 3. WAVELENGTH PLAYER UPLOADS GUESS
             # ---------------------------------------------------------
             elif msg_type == "PLAYER_GUESS":
+                # ANTI-STUCK: If the round already ended due to timeout, unstick the late player
+                if wavelength_state["status"] != "guessing":
+                    print(f"[SERVER] Late guess from {device_id} ignored. Sending old results to unstick board.")
+                    await websocket.send_text(json.dumps({
+                        "type": "ROUND_RESULTS",
+                        "target": wavelength_state["last_target"],
+                        "guesses": wavelength_state["last_guesses"]
+                    }))
+                    continue # Skip the rest of the scoring logic
+                    
                 guess_score = message.get("score")
                 wavelength_state["guesses"][device_id] = guess_score
                 print(f"[SERVER] Received guess from {device_id}: {guess_score}%")
                 
-                # +++ LOGGING: Player locked in their guess +++
                 log_game_event("wavelength", device_id, "PLAYER_GUESSED", level=wavelength_state["current_word"], status="GUESSED", details=f"Guess: {guess_score}%")
                 
                 total_players = len(wavelength_state["registered_players"])
+                
+                # Check if all players (except the host) have guessed
                 if len(wavelength_state["guesses"]) >= (total_players - 1) and total_players > 1:
-                    print("\n[SERVER] ALL GUESSES IN! Round Complete.")
+                    print("\n[SERVER] ALL GUESSES IN! Ending round early.")
                     
-                    # +++ LOGGING: Final Round Results +++
-                    log_game_event("wavelength", "System", "ROUND_END", level=wavelength_state["current_word"], status="COMPLETED", details=f"Target: {wavelength_state['target_score']}%, Guesses: {wavelength_state['guesses']}")
-                    
-                    # ROUND ROBIN ROTATION
-                    wavelength_state["host_index"] = (wavelength_state["host_index"] + 1) % total_players
-                    wavelength_state["status"] = "lobby"
-                    wavelength_state["current_word"] = ""
-                    wavelength_state["target_score"] = 0
-                    wavelength_state["guesses"] = {}
-                    
-                    print(f"[SERVER] Round reset. Next host is: {wavelength_state['registered_players'][wavelength_state['host_index']]}\n")
+                    # Cancel the 30-second timeout since everyone was fast enough
+                    if wavelength_state["timer_task"]:
+                        wavelength_state["timer_task"].cancel()
+                        
+                    await process_wavelength_round_end()
 
             # ---------------------------------------------------------
             # 4. MEMORY GAME RESULTS
@@ -209,22 +269,10 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
     except WebSocketDisconnect:
         manager.disconnect(device_id)
 
-def get_local_ip():
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.connect(('10.255.255.255', 1))
-        ip = s.getsockname()[0]
-    except Exception:
-        ip = '127.0.0.1'
-    finally:
-        s.close()
-    return ip
-
 if __name__ == "__main__":
     import uvicorn
     import os
 
-    # Render provides a specific port. If not on Render, default to 8000.
     port = int(os.environ.get("PORT", 8000)) 
 
     print("\n" + "="*55)
