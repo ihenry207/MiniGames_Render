@@ -12,6 +12,9 @@ app = FastAPI()
 # --- GAME CONSTANTS ---
 LED_MEMORY_BATCH_SIZE = 10  # Number of levels per batch in LED Memory Game
 
+# --- GAME CONSTANTS ---
+LED_MEMORY_BATCH_SIZE = 10  # Number of levels per batch in LED Memory Game
+
 # --- CSV LOGGING SETUP ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
