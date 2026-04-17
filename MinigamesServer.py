@@ -9,6 +9,9 @@ from datetime import datetime
 
 app = FastAPI()
 
+# --- GAME CONSTANTS ---
+LED_MEMORY_BATCH_SIZE = 10  # Number of levels per batch in LED Memory Game
+
 # --- CSV LOGGING SETUP ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -135,9 +138,9 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                 
                 # --- MEMORY GAME LOGIC ---
                 if game_selected == "led_memory":
-                    base_pattern = [random.choice(["red", "green", "yellow"]) for _ in range(10)]
+                    base_pattern = [random.choice(["red", "green", "yellow"]) for _ in range(LED_MEMORY_BATCH_SIZE)]
                     game_states[device_id] = base_pattern 
-                    patterns = [base_pattern[:i+1] for i in range(10)]
+                    patterns = [base_pattern[:i+1] for i in range(LED_MEMORY_BATCH_SIZE)]
                     
                     log_game_event("led_memory", device_id, "GAME_START", level="1-10", status="PENDING")
                     
@@ -239,21 +242,24 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
             # 4. MEMORY GAME RESULTS
             # ---------------------------------------------------------
             elif msg_type == "GAME_RESULTS":
-                results = message.get("results", [])
+                score = message.get("score", 0)
                 device = message.get("device_id")
                 
-                print(f"\n[SERVER] [RESULTS] Received batch from {device}: {results}")
+                print(f"\n[SERVER] [RESULTS] Received score from {device}: {score}")
                 
-                if "loss" in results:
-                    total_levels = len(game_states.get(device, [])) - 10 + len(results)
-                    log_game_event("led_memory", device, "GAME_OVER", level=str(total_levels), status="LOSS", details=str(results))
+                old_pattern = game_states.get(device, [])
+                expected_final_level = len(old_pattern)
+                
+                if score < expected_final_level:
+                    # Player failed before completing the batch
+                    log_game_event("led_memory", device, "GAME_OVER", level=str(score), status="LOSS", details=f"Score: {score}")
                     if device in game_states:
                         del game_states[device]
                 else:
-                    old_pattern = game_states.get(device, [])
-                    log_game_event("led_memory", device, "BATCH_WIN", level=str(len(old_pattern)), status="WIN", details=str(results))
+                    # Player completed the batch successfully
+                    log_game_event("led_memory", device, "BATCH_WIN", level=str(len(old_pattern)), status="WIN", details=f"Score: {score}")
                     
-                    new_additions = [random.choice(["red", "green", "yellow"]) for _ in range(10)]
+                    new_additions = [random.choice(["red", "green", "yellow"]) for _ in range(LED_MEMORY_BATCH_SIZE)]
                     new_base_pattern = old_pattern + new_additions
                     game_states[device] = new_base_pattern 
                     
