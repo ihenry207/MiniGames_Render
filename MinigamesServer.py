@@ -293,7 +293,7 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                         }))
                     
                     # Check if all registered players have submitted scores
-                    all_scores_submitted = all(s is not None for s in memory_state["players"].values())
+                    all_scores_submitted = all(score is not None for score in memory_state["players"].values())
                     
                     if all_scores_submitted and len(memory_state["players"]) > 0:
                         # Determine winner (highest score)
