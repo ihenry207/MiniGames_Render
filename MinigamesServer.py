@@ -5,7 +5,6 @@ import random
 import csv
 import os
 import asyncio
-import time
 from datetime import datetime
 
 app = FastAPI()
@@ -53,12 +52,6 @@ manager = ConnectionManager()
 
 # --- GAME STATES ---
 game_states = {} 
-
-memory_state = {
-    "status": "lobby",
-    "players": {},  # {device_id: score}
-    "batch_id": None
-}
 
 wavelength_state = {
     "status": "lobby", 
@@ -145,15 +138,6 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                 
                 # --- MEMORY GAME LOGIC ---
                 if game_selected == "led_memory":
-                    # Initialize or track player in memory game
-                    if memory_state["status"] == "lobby":
-                        # Starting a new batch
-                        memory_state["batch_id"] = f"batch_{int(time.time())}"
-                        memory_state["players"] = {}
-                        memory_state["status"] = "playing"
-                    
-                    memory_state["players"][device_id] = None  # Score pending
-                    
                     base_pattern = [random.choice(["red", "green", "yellow"]) for _ in range(LED_MEMORY_BATCH_SIZE)]
                     game_states[device_id] = base_pattern 
                     patterns = [base_pattern[:i+1] for i in range(LED_MEMORY_BATCH_SIZE)]
@@ -263,68 +247,30 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                 
                 print(f"\n[SERVER] [RESULTS] Received score from {device}: {score}")
                 
-                # Track this player's score
-                if device in memory_state["players"]:
-                    memory_state["players"][device] = score
+                old_pattern = game_states.get(device, [])
+                expected_final_level = len(old_pattern)
+                
+                if score < expected_final_level:
+                    # Player failed before completing the batch
+                    log_game_event("led_memory", device, "GAME_OVER", level=str(score), status="LOSS", details=f"Score: {score}")
+                    if device in game_states:
+                        del game_states[device]
+                else:
+                    # Player completed the batch successfully
+                    log_game_event("led_memory", device, "BATCH_WIN", level=str(len(old_pattern)), status="WIN", details=f"Score: {score}")
                     
-                    old_pattern = game_states.get(device, [])
-                    expected_final_level = len(old_pattern)
+                    new_additions = [random.choice(["red", "green", "yellow"]) for _ in range(LED_MEMORY_BATCH_SIZE)]
+                    new_base_pattern = old_pattern + new_additions
+                    game_states[device] = new_base_pattern 
                     
-                    if score < expected_final_level:
-                        # Player failed before completing the batch
-                        log_game_event("led_memory", device, "GAME_OVER", level=str(score), status="LOSS", details=f"Score: {score}")
-                        if device in game_states:
-                            del game_states[device]
-                    else:
-                        # Player completed the batch successfully
-                        log_game_event("led_memory", device, "BATCH_WIN", level=str(len(old_pattern)), status="WIN", details=f"Score: {score}")
-                        
-                        new_additions = [random.choice(["red", "green", "yellow"]) for _ in range(LED_MEMORY_BATCH_SIZE)]
-                        new_base_pattern = old_pattern + new_additions
-                        game_states[device] = new_base_pattern 
-                        
-                        start_level = len(old_pattern) + 1
-                        patterns = [new_base_pattern[:i+1] for i in range(len(old_pattern), len(new_base_pattern))]
-                        
-                        log_game_event("led_memory", device, "NEXT_BATCH_SENT", level=f"{start_level}-{start_level+9}", status="PENDING")
-                        
-                        await websocket.send_text(json.dumps({
-                            "type": "PATTERN", "patterns": patterns, "start_level": start_level
-                        }))
+                    start_level = len(old_pattern) + 1
+                    patterns = [new_base_pattern[:i+1] for i in range(len(old_pattern), len(new_base_pattern))]
                     
-                    # Check if all registered players have submitted scores
-                    all_scores_submitted = all(score is not None for score in memory_state["players"].values())
+                    log_game_event("led_memory", device, "NEXT_BATCH_SENT", level=f"{start_level}-{start_level+9}", status="PENDING")
                     
-                    if all_scores_submitted and len(memory_state["players"]) > 0:
-                        # Determine winner (highest score)
-                        winner_device = max(memory_state["players"], key=memory_state["players"].get)
-                        winner_score = memory_state["players"][winner_device]
-                        
-                        print(f"\n[SERVER] Memory Game Results:")
-                        print(f"  Winner: {winner_device} with score {winner_score}")
-                        print(f"  All Scores: {memory_state['players']}")
-                        
-                        # Broadcast results to all memory game players
-                        results_payload = json.dumps({
-                            "type": "MEMORY_RESULTS",
-                            "winner": winner_device,
-                            "winner_score": winner_score,
-                            "all_scores": memory_state["players"]
-                        })
-                        
-                        for player_id in memory_state["players"].keys():
-                            if player_id in manager.active_connections:
-                                try:
-                                    await manager.active_connections[player_id].send_text(results_payload)
-                                except Exception as e:
-                                    print(f"[SERVER] Failed to send results to {player_id}: {e}")
-                        
-                        log_game_event("led_memory", "System", "BATCH_END", level="1-10", status="COMPLETED", details=f"Winner: {winner_device} ({winner_score}), Scores: {memory_state['players']}")
-                        
-                        # Reset memory game state
-                        memory_state["status"] = "lobby"
-                        memory_state["players"] = {}
-                        memory_state["batch_id"] = None
+                    await websocket.send_text(json.dumps({
+                        "type": "PATTERN", "patterns": patterns, "start_level": start_level
+                    }))
 
     except WebSocketDisconnect:
         manager.disconnect(device_id)
