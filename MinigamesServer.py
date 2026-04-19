@@ -78,6 +78,31 @@ wavelength_state = {
         "4: Trashy - Classy",
         "5: Boring - Exciting"
     ],
+    "cat1_options": [
+        "1: Coffee",
+        "2: California",
+        "3: Michigan"
+    ],
+    "cat2_options": [
+        "1: Paperclip",
+        "2: Smartphone",
+        "3: Spoon"
+    ],
+    "cat3_options": [   
+        "1: Pillow",
+        "2: Brick",
+        "3: Cotton Candy"
+    ],
+    "cat4_options": [
+        "1: Reality TV",
+        "2: Opera",
+        "3: Action Movies"
+    ],
+    "cat5_options": [
+        "1: Watching Paint Dry",
+        "2: Roller Coasters",
+        "3: Skydiving"
+    ],
     "current_word": "",
     "target_score": 0,
     "guesses": {},
