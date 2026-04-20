@@ -9,6 +9,15 @@ from datetime import datetime
 import logging
 import sys
 
+# Functions
+def ensure_pattern_length(required_length): # append to pattern, do not destroy it.
+
+    while len(memory_state["pattern"]) < required_length:
+
+        memory_state["pattern"].append(
+            random.choice(["red", "green", "yellow"])
+        )
+
 # --- LOGGING SETUP FOR RENDER ---
 # This forces logs to stream directly to Render's console instantly
 logging.basicConfig(
@@ -184,11 +193,7 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                     required_length = start_level + LED_MEMORY_BATCH_SIZE - 1
 
                     # Extend pattern if this player has advanced further than the current pattern length
-                    while len(memory_state["pattern"]) < required_length:
-
-                        memory_state["pattern"].append(
-                            random.choice(["red", "green", "yellow"])
-                        )
+                    ensure_pattern_length(required_length)
 
                     patterns = [
                         memory_state["pattern"][:i]
@@ -320,25 +325,28 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                 # ----------------------------------
                 else:
 
-                    memory_state["levels"][device] = score + 1
+                next_level = score + 1
 
-                    logger.info(f"{device} requesting next batch")
+                memory_state["levels"][device] = next_level
 
-                    next_start = memory_state["levels"][device]
+                required_length = (
+                    next_level
+                    + LED_MEMORY_BATCH_SIZE
+                    - 1
+                )
 
-                    pattern = [
-                        random.choice(["red", "green", "yellow"])
-                        for _ in range(next_start + LED_MEMORY_BATCH_SIZE - 1)
-                    ]
+                ensure_pattern_length(required_length)
 
-                    patterns = [
-                        pattern[:i]
-                        for i in range(
-                            next_start,
-                            next_start + LED_MEMORY_BATCH_SIZE
-                        )
-                    ]
+                patterns = [
 
+                    memory_state["pattern"][:i]
+
+                    for i in range(
+                        next_level,
+                        next_level + LED_MEMORY_BATCH_SIZE
+                    )
+
+                ]
                     ws = manager.active_connections.get(device)
 
                     if ws:
