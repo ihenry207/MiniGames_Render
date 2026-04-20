@@ -9,15 +9,6 @@ from datetime import datetime
 import logging
 import sys
 
-# Functions
-def ensure_pattern_length(required_length): # append to pattern, do not destroy it.
-
-    while len(memory_state["pattern"]) < required_length:
-
-        memory_state["pattern"].append(
-            random.choice(["red", "green", "yellow"])
-        )
-
 # --- LOGGING SETUP FOR RENDER ---
 # This forces logs to stream directly to Render's console instantly
 logging.basicConfig(
@@ -192,8 +183,12 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
 
                     required_length = start_level + LED_MEMORY_BATCH_SIZE - 1
 
-                    # Extend pattern if this player has advanced further than the current pattern length
-                    ensure_pattern_length(required_length)
+                    # Extend pattern instead of replacing it
+                    while len(memory_state["pattern"]) < required_length:
+
+                        memory_state["pattern"].append(
+                            random.choice(["red", "green", "yellow"])
+                        )
 
                     patterns = [
                         memory_state["pattern"][:i]
@@ -325,29 +320,28 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                 # ----------------------------------
                 else:
 
-                    next_level = score + 1
+                    memory_state["levels"][device] = score + 1
 
-                    memory_state["levels"][device] = next_level
+                    logger.info(f"{device} requesting next batch")
 
-                    required_length = (
-                        next_level
-                        + LED_MEMORY_BATCH_SIZE
-                        - 1
-                    )
+                    next_start = memory_state["levels"][device]
 
-                    ensure_pattern_length(required_length)
+                    required_length = next_start + LED_MEMORY_BATCH_SIZE - 1
 
-                    patterns = [
-
-                        memory_state["pattern"][:i]
-
-                        for i in range(
-                            next_level,
-                            next_level + LED_MEMORY_BATCH_SIZE
+                    # Extend global pattern if needed
+                    while len(memory_state["pattern"]) < required_length:
+                        memory_state["pattern"].append(
+                            random.choice(["red", "green", "yellow"])
                         )
 
+                    patterns = [
+                        memory_state["pattern"][:i]
+                        for i in range(
+                            next_start,
+                            next_start + LED_MEMORY_BATCH_SIZE
+                        )
                     ]
-                    
+
                     ws = manager.active_connections.get(device)
 
                     if ws:
