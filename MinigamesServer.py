@@ -325,28 +325,29 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                 # ----------------------------------
                 else:
 
-                next_level = score + 1
+                    next_level = score + 1
 
-                memory_state["levels"][device] = next_level
+                    memory_state["levels"][device] = next_level
 
-                required_length = (
-                    next_level
-                    + LED_MEMORY_BATCH_SIZE
-                    - 1
-                )
-
-                ensure_pattern_length(required_length)
-
-                patterns = [
-
-                    memory_state["pattern"][:i]
-
-                    for i in range(
-                        next_level,
-                        next_level + LED_MEMORY_BATCH_SIZE
+                    required_length = (
+                        next_level
+                        + LED_MEMORY_BATCH_SIZE
+                        - 1
                     )
 
-                ]
+                    ensure_pattern_length(required_length)
+
+                    patterns = [
+
+                        memory_state["pattern"][:i]
+
+                        for i in range(
+                            next_level,
+                            next_level + LED_MEMORY_BATCH_SIZE
+                        )
+
+                    ]
+                    
                     ws = manager.active_connections.get(device)
 
                     if ws:
