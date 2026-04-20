@@ -181,10 +181,14 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
 
                     start_level = memory_state["levels"][device_id]
 
-                    memory_state["pattern"] = [
-                        random.choice(["red", "green", "yellow"])
-                        for _ in range(start_level + LED_MEMORY_BATCH_SIZE - 1)
-                    ]
+                    required_length = start_level + LED_MEMORY_BATCH_SIZE - 1
+
+                    # Extend pattern if this player has advanced further than the current pattern length
+                    while len(memory_state["pattern"]) < required_length:
+
+                        memory_state["pattern"].append(
+                            random.choice(["red", "green", "yellow"])
+                        )
 
                     patterns = [
                         memory_state["pattern"][:i]
