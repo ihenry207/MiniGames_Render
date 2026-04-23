@@ -245,7 +245,7 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                         await websocket.send_text(json.dumps({
                             "type": "WAVELENGTH_ROLE",
                             "role": "host",
-                            "categories": wavelength_state["category_options"]
+                            "categories": wavelength_state["category_options"],
                             "cat1_words": wavelength_state["cat1_options"],
                             "cat2_words": wavelength_state["cat2_options"],
                             "cat3_words": wavelength_state["cat3_options"],
