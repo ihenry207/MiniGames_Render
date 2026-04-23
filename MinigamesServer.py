@@ -80,13 +80,39 @@ wavelength_state = {
     "status": "lobby", 
     "registered_players": [], 
     "host_index": 0, 
-    "word_options": [
+    "category_options": [
         "1: Hot - Cold",
         "2: Useless - Useful",
         "3: Soft - Hard",
         "4: Trashy - Classy",
         "5: Boring - Exciting"
     ],
+    "cat1_options": [
+        "1: Coffee",
+        "2: California",
+        "3: Michigan"
+    ],
+    "cat2_options": [
+        "1: Paperclip",
+        "2: Smartphone",
+        "3: Spoon"
+    ],
+    "cat3_options": [   
+        "1: Pillow",
+        "2: Brick",
+        "3: Cotton Candy"
+    ],
+    "cat4_options": [
+        "1: Reality TV",
+        "2: Opera",
+        "3: Action Movies"
+    ],
+    "cat5_options": [
+        "1: Watching Paint Dry",
+        "2: Roller Coasters",
+        "3: Skydiving"
+    ],
+    "current_category": "",
     "current_word": "",
     "target_score": 0,
     "guesses": {},
@@ -219,7 +245,12 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                         await websocket.send_text(json.dumps({
                             "type": "WAVELENGTH_ROLE",
                             "role": "host",
-                            "words": wavelength_state["word_options"]
+                            "categories": wavelength_state["category_options"]
+                            "cat1_words": wavelength_state["cat1_options"],
+                            "cat2_words": wavelength_state["cat2_options"],
+                            "cat3_words": wavelength_state["cat3_options"],
+                            "cat4_words": wavelength_state["cat4_options"],
+                            "cat5_words": wavelength_state["cat5_options"]
                         }))
                         logger.info(f"Sent Host options to {device_id}.")
                     
@@ -228,6 +259,7 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                             await websocket.send_text(json.dumps({
                                 "type": "WAVELENGTH_ROLE",
                                 "role": "player_guess",
+                                "category": wavelength_state["current_category"],
                                 "word": wavelength_state["current_word"]
                             }))
                         else:
@@ -240,11 +272,12 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
             # 2. WAVELENGTH HOST UPLOADS TARGET
             # ---------------------------------------------------------
             elif msg_type == "HOST_SUBMIT":
-                word_index = message.get("word_index") 
+                selected_word = message.get("word") 
+                category_index = message.get("category_index")
                 target_score = message.get("score")
-                selected_word = wavelength_state["word_options"][word_index - 1]
                 
                 wavelength_state["current_word"] = selected_word
+                wavelength_state["current_category"] = wavelength_state["category_options"][category_index - 1]
                 wavelength_state["target_score"] = target_score
                 wavelength_state["status"] = "guessing"
                 wavelength_state["guesses"] = {} 
