@@ -277,7 +277,7 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                 target_score = message.get("score")
                 
                 wavelength_state["current_word"] = selected_word
-                wavelength_state["current_category"] = wavelength_state["category_options"][category_index - 1]
+                wavelength_state["current_category"] = wavelength_state["category_options"][category_index]
                 wavelength_state["target_score"] = target_score
                 wavelength_state["status"] = "guessing"
                 wavelength_state["guesses"] = {} 
