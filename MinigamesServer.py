@@ -8,7 +8,7 @@ import asyncio
 from datetime import datetime
 import logging
 import sys
-
+#test push - delete me
 # --- LOGGING SETUP FOR RENDER ---
 # This forces logs to stream directly to Render's console instantly
 logging.basicConfig(
@@ -90,7 +90,7 @@ wavelength_state = {
     "cat1_options": [
         "1: Coffee",
         "2: California",
-        "3: Michigan"
+        "3: Indiana"
     ],
     "cat2_options": [
         "1: Paperclip",
