@@ -8,7 +8,7 @@ import asyncio
 from datetime import datetime
 import logging
 import sys
-#test push - delete me
+
 # --- LOGGING SETUP FOR RENDER ---
 # This forces logs to stream directly to Render's console instantly
 logging.basicConfig(
@@ -19,7 +19,6 @@ logging.basicConfig(
 logger = logging.getLogger("minigames_server")
 
 app = FastAPI()
-
 
 # --- GAME CONSTANTS ---
 LED_MEMORY_BATCH_SIZE = 10  # Number of levels per batch in LED Memory Game
@@ -32,6 +31,7 @@ memory_state = {
     "levels": {},
     "active_players": set(),
 }
+
 # --- CSV LOGGING SETUP ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -116,13 +116,10 @@ def resolve_rps(selection_a: str, selection_b: str):
     """
     if selection_a == "forfeit" and selection_b == "forfeit":
         return "tie", "tie"
-
     if selection_a == "forfeit":
         return "lose", "win"
-
     if selection_b == "forfeit":
         return "win", "lose"
-
     if selection_a == selection_b:
         return "tie", "tie"
 
@@ -171,15 +168,7 @@ async def try_start_rps_match():
             "opponent": p1
         })
 
-        log_game_event(
-            "rps",
-            "System",
-            "MATCH_START",
-            level=game_id,
-            status="READY",
-            details=f"{p1} vs {p2}"
-        )
-
+        log_game_event("rps", "System", "MATCH_START", level=game_id, status="READY", details=f"{p1} vs {p2}")
         print(f"[SERVER] RPS match started: {p1} vs {p2}")
 
 async def handle_rps_disconnect(device_id: str):
@@ -208,24 +197,18 @@ async def handle_rps_disconnect(device_id: str):
         "opponent_selection": "disconnect"
     })
 
-    log_game_event(
-        "rps",
-        device_id,
-        "DISCONNECT",
-        level=game_id,
-        status="LOSS",
-        details=f"Opponent {opponent} awarded win"
-    )
-
+    log_game_event("rps", device_id, "DISCONNECT", level=game_id, status="LOSS", details=f"Opponent {opponent} awarded win")
     cleanup_rps_game(game_id)
 
-# --- GAME STATES ---
+# =========================================================
+# WAVELENGTH GAME STATE AND HELPERS
+# =========================================================
+
 game_states = {} 
 
 wavelength_state = {
     "status": "lobby", 
     "registered_players": [], 
-    "host_index": 0, 
     "category_options": [
         "1: Hot - Cold",
         "2: Useless - Useful",
@@ -233,44 +216,24 @@ wavelength_state = {
         "4: Trashy - Classy",
         "5: Boring - Exciting"
     ],
-    "cat1_options": [
-        "1: Coffee",
-        "2: California",
-        "3: Indiana"
-    ],
-    "cat2_options": [
-        "1: Paperclip",
-        "2: Smartphone",
-        "3: Spoon"
-    ],
-    "cat3_options": [   
-        "1: Pillow",
-        "2: Brick",
-        "3: Cotton Candy"
-    ],
-    "cat4_options": [
-        "1: Reality TV",
-        "2: Opera",
-        "3: Action Movies"
-    ],
-    "cat5_options": [
-        "1: Watching Paint Dry",
-        "2: Roller Coasters",
-        "3: Skydiving"
-    ],
+    "cat1_options": ["1: Coffee", "2: California", "3: Indiana"],
+    "cat2_options": ["1: Paperclip", "2: Smartphone", "3: Spoon"],
+    "cat3_options": ["1: Pillow", "2: Brick", "3: Cotton Candy"],
+    "cat4_options": ["1: Reality TV", "2: Opera", "3: Action Movies"],
+    "cat5_options": ["1: Watching Paint Dry", "2: Roller Coasters", "3: Skydiving"],
     "current_category": "",
     "current_word": "",
     "target_score": 0,
     "guesses": {},
     
-    # NEW: State tracking for timeouts
+    # State tracking for timeouts
     "timer_task": None,
     "last_target": 0,
     "last_guesses": {}
 }
 
 async def process_wavelength_round_end():
-    """Forces the round to end, broadcasts results, and cycles the host."""
+    """Forces the round to end, broadcasts results, and wipes the lobby."""
     logger.info("Round Complete (All Guesses In or Timeout Reached).")
     
     # Save a backup of the results just in case a slow player guesses late
@@ -294,27 +257,59 @@ async def process_wavelength_round_end():
     # LOGGING: Final Round Results
     log_game_event("wavelength", "System", "ROUND_END", level=wavelength_state["current_word"], status="COMPLETED", details=f"Target: {wavelength_state['target_score']}%, Guesses: {wavelength_state['guesses']}")
     
-    # ROUND ROBIN ROTATION
-    total_players = len(wavelength_state["registered_players"])
-    if total_players > 0:
-        wavelength_state["host_index"] = (wavelength_state["host_index"] + 1) % total_players
-        
+    # WIPE THE LOBBY CLEAN FOR THE NEXT ROUND
     wavelength_state["status"] = "lobby"
+    wavelength_state["registered_players"] = []  
     wavelength_state["current_word"] = ""
     wavelength_state["target_score"] = 0
     wavelength_state["guesses"] = {}
     wavelength_state["timer_task"] = None
     
-    if total_players > 0:
-        next_host = wavelength_state['registered_players'][wavelength_state['host_index']]
-        logger.info(f"Round reset. Next host is: {next_host}")
+    logger.info("Round reset. Lobby wiped clean. Waiting for someone to start a new game.")
 
 async def wavelength_timeout_coroutine():
-    """Background timer that counts to 30 and triggers the end of the round."""
+    """Background timer that counts to 30s and triggers the end of the guessing phase."""
     await asyncio.sleep(30)
     if wavelength_state["status"] == "guessing":
         logger.info("30 seconds elapsed! Forcing round to end.")
         await process_wavelength_round_end()
+
+async def wavelength_host_timeout_coroutine():
+    """Background timer that counts to 60s. Skips the host if they are AFK."""
+    await asyncio.sleep(60)
+    if wavelength_state["status"] == "host_choosing":
+        logger.warning("60 seconds elapsed! Host took too long to choose.")
+        
+        # Only cycle the host if there are other people waiting in the lobby
+        if len(wavelength_state["registered_players"]) > 1:
+            # Move the AFK host to the back of the line
+            afk_host = wavelength_state["registered_players"].pop(0)
+            wavelength_state["registered_players"].append(afk_host)
+            
+            new_host = wavelength_state["registered_players"][0]
+            logger.info(f"*** [WAVELENGTH] Shifting host to {new_host} due to inactivity. ***")
+            
+            # Send the new host their options
+            await safe_send(new_host, {
+                "type": "WAVELENGTH_ROLE",
+                "role": "host",
+                "categories": wavelength_state["category_options"],
+                "cat1_words": wavelength_state["cat1_options"],
+                "cat2_words": wavelength_state["cat2_options"],
+                "cat3_words": wavelength_state["cat3_options"],
+                "cat4_words": wavelength_state["cat4_options"],
+                "cat5_words": wavelength_state["cat5_options"]
+            })
+            
+            # Restart the host timer for the new host
+            wavelength_state["timer_task"] = asyncio.create_task(wavelength_host_timeout_coroutine())
+        else:
+            logger.info("Only 1 player in lobby. Keeping them as host and resetting timer.")
+            wavelength_state["timer_task"] = asyncio.create_task(wavelength_host_timeout_coroutine())
+
+# =========================================================
+# WEBSOCKET ENDPOINT
+# =========================================================
 
 @app.websocket("/ws/{device_id}")
 async def websocket_endpoint(websocket: WebSocket, device_id: str):
@@ -355,12 +350,10 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                         memory_state["active_players"].add(device_id)
 
                     start_level = memory_state["levels"][device_id]
-
                     required_length = start_level + LED_MEMORY_BATCH_SIZE - 1
 
                     # Extend pattern instead of replacing it
                     while len(memory_state["pattern"]) < required_length:
-
                         memory_state["pattern"].append(
                             random.choice(["red", "green", "yellow"])
                         )
@@ -378,7 +371,6 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
 
                 # --- RPS GAME LOGIC ---
                 elif game_selected == "rps":
-                    # Player is already in an active game.
                     if device_id in rps_player_game:
                         game_id = rps_player_game[device_id]
                         game = rps_games.get(game_id)
@@ -396,38 +388,24 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                                 "message": "Rejoined active match.",
                                 "opponent": opponent
                             }))
-
                         else:
                             rps_player_game.pop(device_id, None)
-
                             await websocket.send_text(json.dumps({
                                 "type": "RPS_WAITING",
                                 "message": "Waiting for opponent..."
                             }))
-
-                    # Player is already waiting.
                     elif device_id in rps_waiting_queue:
                         await websocket.send_text(json.dumps({
                             "type": "RPS_WAITING",
                             "message": "Waiting for opponent..."
                         }))
-
-                    # New player joins queue.
                     else:
                         rps_waiting_queue.append(device_id)
-
-                        log_game_event(
-                            "rps",
-                            device_id,
-                            "JOIN_QUEUE",
-                            status="WAITING"
-                        )
-
+                        log_game_event("rps", device_id, "JOIN_QUEUE", status="WAITING")
                         await websocket.send_text(json.dumps({
                             "type": "RPS_WAITING",
                             "message": "Waiting for opponent..."
                         }))
-
                         await try_start_rps_match()
                 
                 # --- WAVELENGTH GAME LOGIC ---
@@ -435,14 +413,20 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                     if device_id not in wavelength_state["registered_players"]:
                         wavelength_state["registered_players"].append(device_id)
                         logger.info(f"{device_id} joined Wavelength. Total players: {len(wavelength_state['registered_players'])}")
-                        
                         log_game_event("wavelength", device_id, "JOIN_LOBBY", status="CONNECTED")
 
-                    current_host_id = wavelength_state["registered_players"][wavelength_state["host_index"]]
+                    # THE FIRST PERSON IN THE ARRAY IS ALWAYS THE HOST
+                    current_host_id = wavelength_state["registered_players"][0]
+                    
+                    # Log who the host is clearly in Render and start the 60s AFK timer
+                    if len(wavelength_state["registered_players"]) == 1:
+                        logger.info(f"*** [WAVELENGTH] {current_host_id} is the HOST for this round! ***")
+                        if wavelength_state["timer_task"]:
+                            wavelength_state["timer_task"].cancel()
+                        wavelength_state["timer_task"] = asyncio.create_task(wavelength_host_timeout_coroutine())
 
                     if device_id == current_host_id:
                         wavelength_state["status"] = "host_choosing"
-                        
                         log_game_event("wavelength", device_id, "ROLE_ASSIGNED", status="HOST")
                         
                         await websocket.send_text(json.dumps({
@@ -470,6 +454,7 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                                 "type": "WAVELENGTH_ROLE",
                                 "role": "player_wait"
                             }))
+                            
             # ---------------------------------------------------------
             # 2. RPS COLLECTS SELECTION FROM PLAYERS
             # ---------------------------------------------------------                
@@ -495,18 +480,9 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                 selection = message.get("selection", "forfeit")
                 game["selections"][device_id] = selection
 
-                log_game_event(
-                    "rps",
-                    device_id,
-                    "SELECTION",
-                    level=game_id,
-                    status="LOCKED_IN",
-                    details=selection
-                )
-
+                log_game_event("rps", device_id, "SELECTION", level=game_id, status="LOCKED_IN", details=selection)
                 print(f"[SERVER] RPS selection from {device_id}: {selection}")
 
-                # Wait until both players submit.
                 if opponent not in game["selections"]:
                     await websocket.send_text(json.dumps({
                         "type": "RPS_WAITING",
@@ -534,32 +510,25 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                     "opponent_selection": sel1
                 })
 
-                log_game_event(
-                    "rps",
-                    "System",
-                    "ROUND_END",
-                    level=game_id,
-                    status=f"{p1}:{res1},{p2}:{res2}",
-                    details=f"{p1}={sel1}, {p2}={sel2}"
-                )
-
-                print(
-                    f"[SERVER] RPS result: "
-                    f"{p1}={sel1}/{res1}, {p2}={sel2}/{res2}"
-                )
+                log_game_event("rps", "System", "ROUND_END", level=game_id, status=f"{p1}:{res1},{p2}:{res2}", details=f"{p1}={sel1}, {p2}={sel2}")
+                print(f"[SERVER] RPS result: {p1}={sel1}/{res1}, {p2}={sel2}/{res2}")
 
                 cleanup_rps_game(game_id)
 
             # ---------------------------------------------------------
-            # 2. WAVELENGTH HOST UPLOADS TARGET
+            # 3. WAVELENGTH HOST UPLOADS TARGET
             # ---------------------------------------------------------
             elif msg_type == "HOST_SUBMIT":
-                # Grab the exact data the newly merged ESP32 client is sending
+                
+                # ANTI-HIJACK: If an AFK host wakes up 2 minutes later, ignore them.
+                if len(wavelength_state["registered_players"]) > 0 and device_id != wavelength_state["registered_players"][0]:
+                    logger.warning(f"Ignored late HOST_SUBMIT from {device_id} (They lost their host privileges due to AFK).")
+                    continue
+                
                 selected_word = message.get("word") 
                 category_index = message.get("category_index")
                 target_score = message.get("score")
                 
-                # Look up the top-level category string for reference
                 selected_category = wavelength_state["category_options"][category_index]
                 
                 wavelength_state["current_word"] = selected_word
@@ -573,16 +542,16 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                 
                 log_game_event("wavelength", device_id, "HOST_LOCKED_IN", level=selected_word, status="PENDING_GUESSES", details=f"Target: {target_score}%")
                 
-                # Cancel existing timer if one is somehow running, then start a new 30-second countdown
+                # Cancel AFK Host timer, and start 30s Guesser timeout
                 if wavelength_state["timer_task"]:
                     wavelength_state["timer_task"].cancel()
                 wavelength_state["timer_task"] = asyncio.create_task(wavelength_timeout_coroutine())
 
             # ---------------------------------------------------------
-            # 3. WAVELENGTH PLAYER UPLOADS GUESS
+            # 4. WAVELENGTH PLAYER UPLOADS GUESS
             # ---------------------------------------------------------
             elif msg_type == "PLAYER_GUESS":
-                # ANTI-STUCK: If the round already ended due to timeout, unstick the late player
+                # ANTI-STUCK: Unstick late guessers
                 if wavelength_state["status"] != "guessing":
                     logger.info(f"Late guess from {device_id} ignored. Sending old results to unstick board.")
                     await websocket.send_text(json.dumps({
@@ -590,7 +559,7 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                         "target": wavelength_state["last_target"],
                         "guesses": wavelength_state["last_guesses"]
                     }))
-                    continue # Skip the rest of the scoring logic
+                    continue 
                     
                 guess_score = message.get("score")
                 wavelength_state["guesses"][device_id] = guess_score
@@ -600,19 +569,15 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                 
                 total_players = len(wavelength_state["registered_players"])
                 
-                # Check if all players (except the host) have guessed
                 if len(wavelength_state["guesses"]) >= (total_players - 1) and total_players > 1:
                     logger.info("ALL GUESSES IN! Ending round early.")
-                    
-                    # Cancel the 30-second timeout since everyone was fast enough
                     if wavelength_state["timer_task"]:
                         wavelength_state["timer_task"].cancel()
                         
                     await process_wavelength_round_end()
 
-
             # ---------------------------------------------------------
-            # 4. MEMORY GAME RESULTS (MULTIPLAYER)
+            # 5. MEMORY GAME RESULTS (MULTIPLAYER)
             # ---------------------------------------------------------
             elif msg_type == "GAME_RESULTS":
 
@@ -626,42 +591,30 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                     logger.warning(f"Late score from {device}. The round already ended!")
                     ws = manager.active_connections.get(device)
                     if ws:
-                        # Send them a fake results payload to force their board back to the lobby state
                         await ws.send_text(json.dumps({
                             "type": "MEMORY_RESULTS",
                             "scores": {device: score},
                             "winners": ["Round ended before you finished!"]
                         }))
-                    continue # Skip the rest of the scoring logic
+                    continue 
 
-                # --- NORMAL SCORING LOGIC ---
                 start_level = memory_state["levels"][device]
                 expected_score = start_level + LED_MEMORY_BATCH_SIZE - 1
 
-                # ----------------------------------
                 # CASE 1 — Player FAILED
-                # ----------------------------------
                 if score < expected_score:
-
                     memory_state["scores"][device] = score
                     memory_state["active_players"].discard(device)
-
                     logger.info(f"{device} finished with score {score}")
 
-                # ----------------------------------
                 # CASE 2 — Player PERFECT BATCH
-                # ----------------------------------
                 else:
-
                     memory_state["levels"][device] = score + 1
-
                     logger.info(f"{device} requesting next batch")
 
                     next_start = memory_state["levels"][device]
-
                     required_length = next_start + LED_MEMORY_BATCH_SIZE - 1
 
-                    # Extend global pattern if needed
                     while len(memory_state["pattern"]) < required_length:
                         memory_state["pattern"].append(
                             random.choice(["red", "green", "yellow"])
@@ -676,23 +629,17 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                     ]
 
                     ws = manager.active_connections.get(device)
-
                     if ws:
                         await ws.send_text(json.dumps({
                             "type": "PATTERN",
                             "patterns": patterns,
                             "start_level": next_start
                         }))
-
                     return
 
-                # ----------------------------------
                 # END GAME WHEN ALL PLAYERS DONE
-                # ----------------------------------
                 if len(memory_state["active_players"]) == 0:
-
                     max_score = max(memory_state["scores"].values())
-
                     winners = [
                         dev
                         for dev, sc in memory_state["scores"].items()
