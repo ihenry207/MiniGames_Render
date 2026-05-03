@@ -344,12 +344,15 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
                     # If first player, generate pattern and reset state
                     if memory_state["status"] == "lobby":
                         memory_state["levels"] = {}
-                        memory_state["active_players"] = set(memory_state["registered_players"])
+                        memory_state["active_players"] = set()
                         memory_state["status"] = "playing"
                         memory_state["pattern"] = [random.choice(["red", "green", "yellow"]) for _ in range(LED_MEMORY_BATCH_SIZE)]
                         memory_state["scores"] = {}
+                    
+                    # Ensure EVERY player gets initialized, even if they join late
+                    if device_id not in memory_state["levels"]:
                         memory_state["levels"][device_id] = 1
-   
+                        memory_state["active_players"].add(device_id)
 
                     start_level = memory_state["levels"][device_id]
 
