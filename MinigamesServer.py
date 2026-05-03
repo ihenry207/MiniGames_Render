@@ -617,6 +617,20 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
 
                 logger.info(f"[RESULTS] {device}: {score}")
 
+                # --- ANTI-CRASH: Check if player missed the end of the round ---
+                if device not in memory_state["levels"]:
+                    logger.warning(f"Late score from {device}. The round already ended!")
+                    ws = manager.active_connections.get(device)
+                    if ws:
+                        # Send them a fake results payload to force their board back to the lobby state
+                        await ws.send_text(json.dumps({
+                            "type": "MEMORY_RESULTS",
+                            "scores": {device: score},
+                            "winners": ["Round ended before you finished!"]
+                        }))
+                    continue # Skip the rest of the scoring logic
+
+                # --- NORMAL SCORING LOGIC ---
                 start_level = memory_state["levels"][device]
                 expected_score = start_level + LED_MEMORY_BATCH_SIZE - 1
 
