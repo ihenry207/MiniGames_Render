@@ -554,27 +554,24 @@ async def websocket_endpoint(websocket: WebSocket, device_id: str):
             # 2. WAVELENGTH HOST UPLOADS TARGET
             # ---------------------------------------------------------
             elif msg_type == "HOST_SUBMIT":
-                # 1. Grab the "word_index" the ESP32 actually sends
-                click_count = message.get("word_index", 1) 
+                # Grab the exact data the newly merged ESP32 client is sending
+                selected_word = message.get("word") 
+                category_index = message.get("category_index")
+                target_score = message.get("score")
                 
-                # 2. Convert the 1-5 click count to a 0-4 array index
-                category_index = click_count - 1
-                
-                target_score = message.get("score", 50)
-                
-                # 3. Look up the actual string from the server's list
+                # Look up the top-level category string for reference
                 selected_category = wavelength_state["category_options"][category_index]
                 
-                wavelength_state["current_word"] = selected_category
+                wavelength_state["current_word"] = selected_word
                 wavelength_state["current_category"] = selected_category
                 wavelength_state["target_score"] = target_score
                 wavelength_state["status"] = "guessing"
                 wavelength_state["guesses"] = {} 
                 
-                logger.info(f"HOST LOCKED IN! Category: '{selected_category}' | Target: {target_score}%")
+                logger.info(f"HOST LOCKED IN! Category: '{selected_category}' | Word: '{selected_word}' | Target: {target_score}%")
                 logger.info("30-Second Guessing Timer Started!")
                 
-                log_game_event("wavelength", device_id, "HOST_LOCKED_IN", level=selected_category, status="PENDING_GUESSES", details=f"Target: {target_score}%")
+                log_game_event("wavelength", device_id, "HOST_LOCKED_IN", level=selected_word, status="PENDING_GUESSES", details=f"Target: {target_score}%")
                 
                 # Cancel existing timer if one is somehow running, then start a new 30-second countdown
                 if wavelength_state["timer_task"]:
